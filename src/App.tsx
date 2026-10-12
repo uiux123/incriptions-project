@@ -1,437 +1,336 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { createProjectOnApi, getWorkspaceInsightsOnApi, listProjectsOnApi, predictSymbolOnApi, type ApiProject, type SymbolPrediction } from './api'
+import { useEffect, useState, type ChangeEvent, type DragEvent } from 'react'
+import { getSymbolModelInfoOnApi, getWorkspaceInsightsOnApi, predictSymbolOnApi, type SymbolModelInfo, type SymbolPrediction } from './api'
 import './App.css'
 
-type NavItem = {
-  label: string
-  icon: string
-  badge?: string
-}
+type Screen = 'Home' | 'Character Recognition' | 'Recognition Result' | 'Recognition Examples' | 'Three-Input Analysis' | 'Dataset' | 'About'
 
-type Project = {
-  name: string
-  status: 'On track' | 'In review' | 'Planning'
-  progress: number
-  tone: 'lilac' | 'yellow' | 'mint'
-}
-
-type WorkspaceSummary = {
-  completionRate: number
-  completedTasks: number
-  totalTasks: number
-}
-
-const navItems: NavItem[] = [
-  { label: 'Overview', icon: '⌂' },
-  { label: 'Projects', icon: '▦', badge: '8' },
-  { label: 'Reports', icon: '◒' },
-  { label: 'Team', icon: '♧' },
+const navigation: Array<{ label: Screen; icon: string }> = [
+  { label: 'Home', icon: '⌂' },
+  { label: 'Character Recognition', icon: '⌗' },
+  { label: 'Recognition Examples', icon: '▣' },
+  { label: 'Three-Input Analysis', icon: '◫' },
+  { label: 'Dataset', icon: '▤' },
+  { label: 'About', icon: 'ⓘ' },
 ]
 
-const stats = [
-  { label: 'Active projects', value: '08', change: '+12.5%', note: 'vs last month', tone: 'purple', icon: '✦' },
-  { label: 'Tasks completed', value: '124', change: '+8.2%', note: 'vs last month', tone: 'blue', icon: '✓' },
-  { label: 'Hours tracked', value: '286.5', change: '+4.6%', note: 'vs last month', tone: 'orange', icon: '◷' },
-  { label: 'Team members', value: '16', change: '+2', note: 'new this month', tone: 'green', icon: '♧' },
+const processSteps = [
+  { title: 'Inscription', subtitle: 'Historical image input', icon: '01' },
+  { title: 'Preparation', subtitle: 'Image preprocessing', icon: '02' },
+  { title: 'Recognition', subtitle: 'Ancient characters', icon: '03' },
+  { title: 'Interpretation', subtitle: 'Mapping and language analysis', icon: '04' },
+  { title: 'Final Evidence', subtitle: 'Ranked suggestions', icon: '05' },
 ]
 
-const initialActivity = [
-  { initials: 'MC', name: 'Maya Chen', action: 'completed the homepage wireframes', project: 'Website redesign', time: '12 min ago', color: 'coral' },
-  { initials: 'JR', name: 'Jon Rivera', action: 'commented on the launch checklist', project: 'Spring launch', time: '43 min ago', color: 'blue' },
-  { initials: 'AK', name: 'Aisha Khan', action: 'uploaded 6 new assets', project: 'Brand refresh', time: '2 hours ago', color: 'purple' },
-  { initials: 'TS', name: 'Theo Scott', action: 'moved a task to review', project: 'Mobile app', time: '4 hours ago', color: 'green' },
+const examples = [
+  { name: 'Example 1', input: 'ඉ', output: 'ඉ', confidence: 92.3, tone: 'green' },
+  { name: 'Example 2', input: 'ක', output: 'ක', confidence: 78.6, tone: 'gold' },
+  { name: 'Example 3', input: 'ඝ', output: 'ඝ', confidence: 88.1, tone: 'green' },
 ]
 
-const initialProjects: Project[] = [
-  { name: 'Website redesign', status: 'On track', progress: 78, tone: 'lilac' },
-  { name: 'Spring launch', status: 'In review', progress: 54, tone: 'yellow' },
-  { name: 'Mobile app', status: 'On track', progress: 36, tone: 'mint' },
-]
-
-const projectTones: Project['tone'][] = ['lilac', 'yellow', 'mint']
-
-function mapApiProject(project: ApiProject, index: number): Project {
-  return {
-    name: project.name,
-    status: project.status === 'active' ? 'On track' : project.status === 'paused' ? 'In review' : project.status === 'completed' ? 'On track' : 'Planning',
-    progress: project.progress,
-    tone: projectTones[index % projectTones.length],
-  }
-}
-
-function prepareDrawingCanvas(canvas: HTMLCanvasElement) {
-  const context = canvas.getContext('2d')
-  if (!context) return
-  context.fillStyle = '#ffffff'
-  context.fillRect(0, 0, canvas.width, canvas.height)
-  context.strokeStyle = '#242238'
-  context.lineWidth = 18
-  context.lineCap = 'round'
-  context.lineJoin = 'round'
+function percent(value: number) {
+  return `${(value * 100).toFixed(1)}%`
 }
 
 function App() {
-  const [activeNav, setActiveNav] = useState('Overview')
-  const [notice, setNotice] = useState('')
-  const [projects, setProjects] = useState<Project[]>(() => {
-    const savedProjects = window.localStorage.getItem('atlas-projects')
-
-    if (!savedProjects) return initialProjects
-
-    try {
-      const parsedProjects: unknown = JSON.parse(savedProjects)
-      return Array.isArray(parsedProjects) ? parsedProjects as Project[] : initialProjects
-    } catch {
-      return initialProjects
-    }
-  })
-  const [activity, setActivity] = useState(initialActivity)
-  const [workspaceSummary, setWorkspaceSummary] = useState<WorkspaceSummary>({ completionRate: 72, completedTasks: 18, totalTasks: 25 })
-  const [isProjectModalOpen, setIsProjectModalOpen] = useState(false)
-  const [projectName, setProjectName] = useState('')
-  const [projectError, setProjectError] = useState('')
-  const [isSavingProject, setIsSavingProject] = useState(false)
-  const [symbolPrediction, setSymbolPrediction] = useState<SymbolPrediction | null>(null)
-  const [isPredictingSymbol, setIsPredictingSymbol] = useState(false)
-  const [hasDrawing, setHasDrawing] = useState(false)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-
-  useEffect(() => {
-    window.localStorage.setItem('atlas-projects', JSON.stringify(projects))
-  }, [projects])
-
-  useEffect(() => {
-    if (canvasRef.current) prepareDrawingCanvas(canvasRef.current)
-  }, [])
+  const [activeScreen, setActiveScreen] = useState<Screen>('Home')
+  const [prediction, setPrediction] = useState<SymbolPrediction | null>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [previewUrl, setPreviewUrl] = useState('')
+  const [modelInfo, setModelInfo] = useState<SymbolModelInfo | null>(null)
+  const [modelStatus, setModelStatus] = useState<'loading' | 'online' | 'offline'>('loading')
+  const [isPredicting, setIsPredicting] = useState(false)
+  const [error, setError] = useState('')
+  const [isDragging, setIsDragging] = useState(false)
+  const [projectCount, setProjectCount] = useState(0)
 
   useEffect(() => {
     let isCurrent = true
-
-    const syncDashboard = async () => {
-      try {
-        const [apiProjects, apiInsights] = await Promise.all([listProjectsOnApi(), getWorkspaceInsightsOnApi()])
+    void getSymbolModelInfoOnApi()
+      .then((info) => {
         if (!isCurrent) return
-        if (apiProjects.length > 0) setProjects(apiProjects.map(mapApiProject))
-        if (apiInsights.task_count > 0) {
-          setWorkspaceSummary({
-            completionRate: apiInsights.completion_rate,
-            completedTasks: apiInsights.completed_task_count,
-            totalTasks: apiInsights.task_count,
-          })
-        }
-      } catch {
-        // Offline mode keeps the local dashboard data visible.
-      }
-    }
-
-    void syncDashboard()
+        setModelInfo(info)
+        setModelStatus('online')
+      })
+      .catch(() => {
+        if (isCurrent) setModelStatus('offline')
+      })
+    void getWorkspaceInsightsOnApi()
+      .then((insights) => {
+        if (isCurrent) setProjectCount(insights.project_count)
+      })
+      .catch(() => undefined)
     return () => { isCurrent = false }
   }, [])
 
-  const showNotice = (message: string) => {
-    setNotice(message)
-    window.setTimeout(() => setNotice(''), 2600)
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl)
+    }
+  }, [previewUrl])
+
+  const openScreen = (screen: Screen) => {
+    setActiveScreen(screen)
+    setError('')
   }
 
-  const openProjectModal = () => {
-    setProjectName('')
-    setProjectError('')
-    setIsProjectModalOpen(true)
-  }
-
-  const createProject = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const name = projectName.trim()
-
-    if (!name) {
-      setProjectError('Give your project a name to continue.')
+  const selectFile = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      setError('Please choose a PNG, JPG, or JPEG image.')
       return
     }
-
-    setIsSavingProject(true)
-    let createdProject: Project = { name, status: 'Planning', progress: 0, tone: 'lilac' }
-
-    try {
-      const apiProject = await createProjectOnApi(name)
-      createdProject = mapApiProject(apiProject, 0)
-    } catch {
-      // The dashboard remains usable when the API is not running locally.
-    }
-
-    setProjects((currentProjects) => [createdProject, ...currentProjects])
-    setActivity((currentActivity) => [
-      { initials: 'AM', name: 'Alex Morgan', action: 'created a new project', project: name, time: 'just now', color: 'purple' },
-      ...currentActivity,
-    ].slice(0, 4))
-    setIsProjectModalOpen(false)
-    setIsSavingProject(false)
-    setActiveNav('Projects')
-    showNotice(`${name} was created`)
+    setSelectedFile(file)
+    setPreviewUrl(URL.createObjectURL(file))
+    setPrediction(null)
+    setError('')
+    setActiveScreen('Character Recognition')
   }
 
-  const predictSymbolFile = async (file: File) => {
-    setIsPredictingSymbol(true)
-    try {
-      setSymbolPrediction(await predictSymbolOnApi(file))
-    } catch {
-      showNotice('Start the API to identify handwritten symbols')
-    } finally {
-      setIsPredictingSymbol(false)
-    }
-  }
-
-  const recognizeSymbol = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
-    if (file) void predictSymbolFile(file)
+    if (file) selectFile(file)
     event.target.value = ''
   }
 
-  const drawingPoint = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    const canvas = event.currentTarget
-    const bounds = canvas.getBoundingClientRect()
-    return {
-      x: (event.clientX - bounds.left) * (canvas.width / bounds.width),
-      y: (event.clientY - bounds.top) * (canvas.height / bounds.height),
-    }
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    setIsDragging(false)
+    const file = event.dataTransfer.files[0]
+    if (file) selectFile(file)
   }
 
-  const beginDrawing = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    const canvas = event.currentTarget
-    const context = canvas.getContext('2d')
-    if (!context) return
-    canvas.setPointerCapture(event.pointerId)
-    const point = drawingPoint(event)
-    context.beginPath()
-    context.moveTo(point.x, point.y)
-    setHasDrawing(true)
-  }
-
-  const drawSymbol = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
-    const context = event.currentTarget.getContext('2d')
-    if (!context) return
-    const point = drawingPoint(event)
-    context.lineTo(point.x, point.y)
-    context.stroke()
-  }
-
-  const clearDrawing = () => {
-    if (canvasRef.current) prepareDrawingCanvas(canvasRef.current)
-    setHasDrawing(false)
-    setSymbolPrediction(null)
-  }
-
-  const recognizeDrawing = async () => {
-    if (!canvasRef.current || !hasDrawing) {
-      showNotice('Draw a symbol before identifying it')
+  const identifyCharacter = async () => {
+    if (!selectedFile) {
+      setError('Select a handwritten character image before recognition.')
       return
     }
-    const blob = await new Promise<Blob | null>((resolve) => canvasRef.current?.toBlob(resolve, 'image/png'))
-    if (blob) await predictSymbolFile(new File([blob], 'handwritten-symbol.png', { type: 'image/png' }))
+    setIsPredicting(true)
+    setError('')
+    try {
+      const result = await predictSymbolOnApi(selectedFile)
+      setPrediction(result)
+      setActiveScreen('Recognition Result')
+    } catch {
+      setModelStatus('offline')
+      setError('The model could not be reached. Start the FastAPI backend on port 8000 and try again.')
+    } finally {
+      setIsPredicting(false)
+    }
   }
 
+  const identifyAnother = () => {
+    setSelectedFile(null)
+    setPreviewUrl('')
+    setPrediction(null)
+    setError('')
+    setActiveScreen('Character Recognition')
+  }
+
+  const statusLabel = modelStatus === 'online' ? 'MODEL ONLINE' : modelStatus === 'loading' ? 'CHECKING MODEL' : 'MODEL OFFLINE'
+
   return (
-    <div className="dashboard-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">A</div>
-          <div>
-            <strong>atlas</strong>
-            <span>WORKSPACE</span>
-          </div>
-        </div>
-
-        <div className="workspace-switcher">
-          <div className="workspace-avatar">N</div>
-          <div className="workspace-copy">
-            <span>Workspace</span>
-            <strong>Northstar Studio</strong>
-          </div>
-          <span className="chevron">⌄</span>
-        </div>
-
-        <nav className="primary-nav" aria-label="Primary navigation">
-          <span className="nav-label">MENU</span>
-          {navItems.map((item) => (
+    <div className="research-shell">
+      <aside className="research-sidebar">
+        <button className="research-brand" type="button" onClick={() => openScreen('Home')}>
+          <span className="temple-mark">⌂</span>
+          <span><strong>Sri Lankan</strong><strong>Ancient Inscription</strong><strong>Translator</strong><small>AI for Epigraphic Research</small></span>
+        </button>
+        <nav className="research-nav" aria-label="Research navigation">
+          {navigation.map((item) => (
             <button
-              className={`nav-item ${activeNav === item.label ? 'active' : ''}`}
+              className={`research-nav-item ${(activeScreen === item.label || (activeScreen === 'Recognition Result' && item.label === 'Character Recognition')) ? 'active' : ''}`}
               key={item.label}
-              onClick={() => setActiveNav(item.label)}
               type="button"
+              onClick={() => openScreen(item.label)}
             >
-              <span className="nav-icon" aria-hidden="true">{item.icon}</span>
+              <span className="research-nav-icon" aria-hidden="true">{item.icon}</span>
               <span>{item.label}</span>
-              {item.badge && <span className="nav-badge">{item.badge}</span>}
             </button>
           ))}
         </nav>
-
-        <div className="sidebar-footer">
-          <button className="nav-item" type="button" onClick={() => showNotice('Settings are coming soon')}>
-            <span className="nav-icon" aria-hidden="true">⚙</span>
-            <span>Settings</span>
-          </button>
-          <div className="profile-card">
-            <div className="profile-avatar">AM</div>
-            <div className="profile-copy">
-              <strong>Alex Morgan</strong>
-              <span>Admin</span>
-            </div>
-            <button className="more-button" type="button" aria-label="Open profile menu" onClick={() => showNotice('Profile menu opened')}>•••</button>
-          </div>
+        <div className="sidebar-quote">
+          <span>Preserving Sri Lanka’s</span>
+          <span>Epigraphic Heritage</span>
+          <span>with AI</span>
+          <i />
         </div>
       </aside>
 
-      <main className="dashboard-main">
-        <header className="topbar">
-          <div className="mobile-brand"><div className="brand-mark">A</div><strong>atlas</strong></div>
-          <div className="topbar-actions">
-            <button className="icon-button" type="button" aria-label="Search" onClick={() => showNotice('Search is ready for your next query')}>⌕</button>
-            <button className="icon-button notification-button" type="button" aria-label="Notifications" onClick={() => showNotice('You have 3 new notifications')}>
-              ♧<span className="notification-dot" />
-            </button>
-            <div className="topbar-avatar">AM</div>
-          </div>
+      <main className="research-main">
+        <header className="research-topbar">
+          <div className="mobile-research-brand"><span className="temple-mark">⌂</span><strong>Sri Lankan Ancient Inscription Translator</strong></div>
+          <div className="topbar-meta"><span>Research Prototype</span><b>|</b><span>v0.1</span></div>
         </header>
 
-        <div className="content-wrap">
-          <div className="page-heading">
-            <div>
-              <p className="eyebrow">Monday, October 12, 2026</p>
-              <h1>Good morning, Alex <span aria-hidden="true">✦</span></h1>
-              <p className="heading-copy">Here’s what’s happening across your workspace today.</p>
-            </div>
-            <button className="primary-button" type="button" onClick={openProjectModal}>
-              <span aria-hidden="true">+</span> New project
-            </button>
-          </div>
-
-          <section className="stats-grid" aria-label="Workspace summary">
-            {stats.map((stat) => (
-              <article className="stat-card" key={stat.label}>
-                <div className={`stat-icon ${stat.tone}`}>{stat.icon}</div>
-                <div className="stat-details">
-                  <p>{stat.label}</p>
-                  <div className="stat-value-row">
-                    <strong>{stat.label === 'Active projects' ? String(projects.length).padStart(2, '0') : stat.label === 'Tasks completed' && workspaceSummary.totalTasks > 0 ? String(workspaceSummary.completedTasks) : stat.value}</strong>
-                    <span className="stat-change">{stat.change}</span>
-                  </div>
-                  <span className="stat-note">{stat.note}</span>
-                </div>
-                <span className="sparkline" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /></span>
-              </article>
-            ))}
-          </section>
-
-          <section className="dashboard-grid">
-            <article className="panel activity-panel">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Keep up with your team</p>
-                  <h2>Recent activity</h2>
-                </div>
-                <button className="text-button" type="button" onClick={() => showNotice('Showing all activity')}>View all <span aria-hidden="true">→</span></button>
-              </div>
-              <div className="activity-list">
-                {activity.map((item) => (
-                  <div className="activity-item" key={`${item.name}-${item.time}`}>
-                    <div className={`activity-avatar ${item.color}`}>{item.initials}</div>
-                    <div className="activity-copy">
-                      <p><strong>{item.name}</strong> {item.action}</p>
-                      <span>{item.project}</span>
-                    </div>
-                    <time>{item.time}</time>
-                  </div>
-                ))}
-              </div>
-            </article>
-
-            <article className="panel progress-panel">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Your focus this week</p>
-                  <h2>Weekly progress</h2>
-                </div>
-                <button className="more-button" type="button" aria-label="More progress options" onClick={() => showNotice('Progress options opened')}>•••</button>
-              </div>
-              <div className="progress-body">
-                <div className="progress-ring" style={{ background: `conic-gradient(var(--purple) 0 ${workspaceSummary.completionRate}%, #eeebfa ${workspaceSummary.completionRate}% 100%)` }} aria-label={`${workspaceSummary.completionRate} percent complete`}><div><strong>{workspaceSummary.completionRate}%</strong><span>complete</span></div></div>
-                <div className="progress-summary">
-                  <strong>Great momentum!</strong>
-                  <p>You’re ahead of your usual pace. Keep the focus going.</p>
-                  <div className="progress-legend"><span><i className="legend-dot done" />Completed <b>{workspaceSummary.completedTasks}</b></span><span><i className="legend-dot left" />Remaining <b>{Math.max(workspaceSummary.totalTasks - workspaceSummary.completedTasks, 0)}</b></span></div>
-                </div>
-              </div>
-              <div className="progress-footer"><span>Weekly target</span><strong>25 tasks</strong></div>
-            </article>
-          </section>
-
-          <section className="bottom-grid">
-            <article className="panel projects-panel">
-              <div className="panel-heading">
-                <div><p className="eyebrow">Across your workspace</p><h2>Project pulse</h2></div>
-                <button className="text-button" type="button" onClick={() => setActiveNav('Projects')}>See projects <span aria-hidden="true">→</span></button>
-              </div>
-              {projects.map((project) => (
-                <div className="project-row" key={project.name}>
-                  <div className="project-name"><span className={`project-dot ${project.tone}`} />{project.name}</div>
-                  <span className={`project-status ${project.status === 'In review' ? 'review' : project.status === 'Planning' ? 'planning' : 'on-track'}`}>{project.status}</span>
-                  <div className="mini-progress"><span style={{ width: `${project.progress}%` }} /></div>
-                  <strong>{project.progress}%</strong>
-                </div>
-              ))}
-            </article>
-            <article className="panel invite-panel">
-              <div className="invite-art" aria-hidden="true"><span>✦</span><span>+</span><span>•</span></div>
-              <div><p className="eyebrow">Grow together</p><h2>Bring your team along</h2><p>Invite teammates to collaborate and get more done, together.</p></div>
-              <button className="secondary-button" type="button" onClick={() => showNotice('Invite link copied')}>Invite teammates <span aria-hidden="true">→</span></button>
-            </article>
-          </section>
-
-          <section className="panel recognition-panel">
-            <div className="recognition-copy">
-              <p className="eyebrow">Powered by your Python model</p>
-              <h2>Identify a handwritten symbol</h2>
-              <p>Upload a clear image of one Sinhala symbol and Atlas will rank the closest matches.</p>
-            </div>
-            <div className="drawing-recognizer">
-              <canvas ref={canvasRef} className="drawing-canvas" width="192" height="192" aria-label="Draw a handwritten symbol" onPointerDown={beginDrawing} onPointerMove={drawSymbol} onPointerUp={() => setHasDrawing(true)} onPointerCancel={() => setHasDrawing(true)} />
-              <div className="drawing-tools"><button className="clear-drawing" type="button" onClick={clearDrawing}>Clear</button><button className="identify-button" type="button" disabled={isPredictingSymbol} onClick={() => void recognizeDrawing}>{isPredictingSymbol ? 'Reading…' : 'Identify drawing'}</button></div>
-            </div>
-            <label className="upload-button">
-              <input type="file" accept="image/*" onChange={recognizeSymbol} />
-              <span aria-hidden="true">↥</span> {isPredictingSymbol ? 'Reading symbol…' : 'Upload image'}
-            </label>
-            {symbolPrediction && (
-              <div className="recognition-result" role="status">
-                <div className="recognized-symbol">{symbolPrediction.symbol}</div>
-                <div><span className="eyebrow">Best match · {Math.round(symbolPrediction.confidence * 100)}% confidence</span><strong>Top alternatives</strong><div className="candidate-list">{symbolPrediction.candidates.map((candidate) => <span key={candidate.symbol}>{candidate.symbol} <b>{Math.round(candidate.confidence * 100)}%</b></span>)}</div></div>
-              </div>
-            )}
-          </section>
-        </div>
+        {activeScreen === 'Home' && (
+          <HomeView onUpload={handleFileChange} onOpenRecognition={() => openScreen('Character Recognition')} projectCount={projectCount} modelStatus={statusLabel} />
+        )}
+        {activeScreen === 'Character Recognition' && (
+          <RecognitionInputView
+            selectedFile={selectedFile}
+            previewUrl={previewUrl}
+            modelInfo={modelInfo}
+            modelStatus={statusLabel}
+            isPredicting={isPredicting}
+            error={error}
+            isDragging={isDragging}
+            onFileChange={handleFileChange}
+            onDrop={handleDrop}
+            onDragOver={(event) => { event.preventDefault(); setIsDragging(true) }}
+            onDragLeave={() => setIsDragging(false)}
+            onIdentify={() => void identifyCharacter()}
+            onClear={identifyAnother}
+          />
+        )}
+        {activeScreen === 'Recognition Result' && prediction && (
+          <RecognitionResultView prediction={prediction} selectedFile={selectedFile} previewUrl={previewUrl} modelInfo={modelInfo} onIdentifyAnother={identifyAnother} />
+        )}
+        {activeScreen === 'Recognition Examples' && <ExamplesView onOpenRecognition={() => openScreen('Character Recognition')} />}
+        {activeScreen === 'Three-Input Analysis' && <ThreeInputView onUpload={handleFileChange} onOpenRecognition={() => openScreen('Character Recognition')} />}
+        {activeScreen === 'Dataset' && <DatasetView modelInfo={modelInfo} modelStatus={statusLabel} />}
+        {activeScreen === 'About' && <AboutView modelInfo={modelInfo} />}
       </main>
 
-      {isProjectModalOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsProjectModalOpen(false)}>
-          <div className="project-modal" role="dialog" aria-modal="true" aria-labelledby="new-project-title" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <div><p className="eyebrow">Start something new</p><h2 id="new-project-title">Create a project</h2></div>
-              <button className="modal-close" type="button" aria-label="Close dialog" onClick={() => setIsProjectModalOpen(false)}>×</button>
-            </div>
-            <form onSubmit={createProject}>
-              <label className="form-label" htmlFor="project-name">Project name</label>
-              <input className={`project-input ${projectError ? 'has-error' : ''}`} id="project-name" autoFocus value={projectName} onChange={(event) => { setProjectName(event.target.value); setProjectError('') }} placeholder="e.g. Q4 campaign" />
-              {projectError && <p className="form-error" role="alert">{projectError}</p>}
-              <p className="form-help">You can add tasks, teammates, and a deadline after creating it.</p>
-              <div className="modal-actions"><button className="cancel-button" type="button" onClick={() => setIsProjectModalOpen(false)} disabled={isSavingProject}>Cancel</button><button className="primary-button" type="submit" disabled={isSavingProject}>{isSavingProject ? 'Saving…' : 'Create project'}</button></div>
-            </form>
-          </div>
-        </div>
-      )}
-      {notice && <div className="toast" role="status">{notice}</div>}
     </div>
   )
+}
+
+type HomeViewProps = {
+  onUpload: (event: ChangeEvent<HTMLInputElement>) => void
+  onOpenRecognition: () => void
+  projectCount: number
+  modelStatus: string
+}
+
+function HomeView({ onUpload, onOpenRecognition, projectCount, modelStatus }: HomeViewProps) {
+  return (
+    <div className="research-content home-content">
+      <section className="hero-card">
+        <p className="section-kicker">DIGITAL EPIGRAPHY RESEARCH PROJECT</p>
+        <h1>Sri Lankan Ancient Inscription Translator</h1>
+        <p>An AI-assisted system designed to examine multiple representations of the same ancient inscription and support character recognition and historical interpretation.</p>
+        <div className="hero-tags"><span>Selected Period: Pruva Bhāṣā</span><span>Current Prototype: Handwritten Character Recognition</span><span>Expert Verification Required</span></div>
+      </section>
+
+      <SectionHeading title="Inscription Representations" description="Three forms of the same inscription are intended to provide independent evidence." />
+      <div className="representation-grid">
+        <RepresentationCard number="I" title="Direct Stone Image" status="PLANNED" description="Original image captured directly from the ancient inscription engraved on the stone surface." />
+        <RepresentationCard number="II" title="Human-Drawn / Eye Copy" status="AVAILABLE" description="A handwritten or traced representation produced by observing the original inscription." available onUpload={onUpload} />
+        <RepresentationCard number="III" title="Estampage / Scan" status="PLANNED" description="A digitised representation created from an estampage of the same original inscription." />
+      </div>
+
+      <SectionHeading title="Proposed Interpretation Process" description="High-level progression from inscription evidence to suggested interpretation." />
+      <ProcessStrip />
+
+      <div className="home-status-row">
+        <div><span className="status-dot online" /><strong>{modelStatus}</strong><span>HOG + Random Forest character classifier</span></div>
+        <div><span>Research workspace projects</span><strong>{projectCount || '—'}</strong></div>
+        <button type="button" onClick={onOpenRecognition}>Open recognition workspace <span>→</span></button>
+      </div>
+    </div>
+  )
+}
+
+function SectionHeading({ title, description }: { title: string; description: string }) {
+  return <div className="section-heading"><h2>{title}</h2><p>{description}</p><div className="ornament"><i /><b>◆</b><i /></div></div>
+}
+
+function RepresentationCard({ number, title, status, description, available = false, onUpload }: { number: string; title: string; status: string; description: string; available?: boolean; onUpload?: (event: ChangeEvent<HTMLInputElement>) => void }) {
+  return (
+    <article className={`representation-card ${available ? 'available' : ''}`}>
+      <div className="representation-top"><span className="roman-number">{number}</span><span className="representation-status">{status}</span></div>
+      <h3>{title}</h3>
+      <p>{description}</p>
+      {available && onUpload ? (
+        <label className="representation-upload"><span className="upload-glyph">⇧</span><strong>Select Ancient Character Image</strong><small>PNG, JPG or JPEG</small><input type="file" accept="image/png,image/jpeg,image/jpg" onChange={onUpload} /></label>
+      ) : <div className="planned-slot"><strong>{title}</strong><small>Planned for a future development stage</small></div>}
+    </article>
+  )
+}
+
+function ProcessStrip() {
+  return <div className="process-strip">{processSteps.map((step, index) => <div className="process-step" key={step.title}><span>{step.icon}</span><strong>{step.title}</strong><small>{step.subtitle}</small>{index < processSteps.length - 1 && <b className="process-arrow">→</b>}</div>)}</div>
+}
+
+type RecognitionInputViewProps = {
+  selectedFile: File | null
+  previewUrl: string
+  modelInfo: SymbolModelInfo | null
+  modelStatus: string
+  isPredicting: boolean
+  error: string
+  isDragging: boolean
+  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void
+  onDrop: (event: DragEvent<HTMLDivElement>) => void
+  onDragOver: (event: DragEvent<HTMLDivElement>) => void
+  onDragLeave: () => void
+  onIdentify: () => void
+  onClear: () => void
+}
+
+function RecognitionInputView({ selectedFile, previewUrl, modelInfo, modelStatus, isPredicting, error, isDragging, onFileChange, onDrop, onDragOver, onDragLeave, onIdentify, onClear }: RecognitionInputViewProps) {
+  return (
+    <div className="research-content recognition-content">
+      <PageTitle title="01 — Handwritten Character Input" subtitle="Select a handwritten ancient-character image for recognition." />
+      <div className="recognition-grid">
+        <section className="research-card upload-card">
+          <CardTitle icon="⇧" title="Ancient Character Image" description="Upload a handwritten character (PNG, JPG or JPEG)." />
+          <div className={`drop-zone ${isDragging ? 'dragging' : ''}`} onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}>
+            {previewUrl ? <img src={previewUrl} className="uploaded-preview" alt="Selected handwritten character" /> : <><span className="drop-icon">⇧</span><strong>Drop an image here</strong><span>or</span></>}
+            <label className="browse-button">{previewUrl ? 'Change Image' : 'Browse Image'}<input type="file" accept="image/png,image/jpeg,image/jpg" onChange={onFileChange} /></label>
+            {selectedFile ? <div className="file-detail"><span>File name: {selectedFile.name}</span><span>Size: {(selectedFile.size / 1024).toFixed(1)} KB</span></div> : <small className="drop-help">Use a clear image containing one handwritten symbol.</small>}
+          </div>
+        </section>
+
+        <section className="research-card preview-card">
+          <CardTitle icon="◉" title="Input Preview" description="The selected handwritten character is shown below." />
+          <div className="large-preview">{previewUrl ? <img src={previewUrl} alt="Input preview" /> : <div className="empty-preview"><span>◎</span><small>No image selected</small></div>}</div>
+          <div className="image-meta"><div><span>Input Type</span><strong>Handwritten / Eye Copy</strong></div><div><span>Image Format</span><strong>{selectedFile?.type.replace('image/', '').toUpperCase() || '—'}</strong></div><div><span>Image Size</span><strong>{selectedFile ? `${(selectedFile.size / 1024).toFixed(1)} KB upload` : '—'}</strong></div><div><span>Status</span><strong className={modelStatus === 'MODEL ONLINE' ? 'ready-text' : 'warning-text'}>{modelStatus === 'MODEL ONLINE' ? 'Ready for Recognition' : modelStatus}</strong></div></div>
+        </section>
+      </div>
+      <div className="recognition-action-bar"><div><strong>Character Recognition</strong><span>{modelInfo ? `${modelInfo.n_estimators}-tree Random Forest · ${modelInfo.classes.length} Sinhala classes` : 'Connect the Python model to continue.'}</span></div><button className="gold-button" type="button" disabled={!selectedFile || isPredicting} onClick={onIdentify}>{isPredicting ? 'Reading Character…' : '✦ Identify Character'}</button></div>
+      {error && <div className="inline-error" role="alert">{error}</div>}
+      <p className="research-note">The classifier ranks visual similarity. Historical translation and epigraphic conclusions require expert verification.</p>
+      <button className="back-link" type="button" onClick={onClear}>← Clear selected image</button>
+    </div>
+  )
+}
+
+function PageTitle({ title, subtitle }: { title: string; subtitle: string }) {
+  return <div className="page-title"><h1>{title}</h1><p>{subtitle}</p></div>
+}
+
+function CardTitle({ icon, title, description }: { icon: string; title: string; description: string }) {
+  return <div className="card-title"><span>{icon}</span><div><h2>{title}</h2><p>{description}</p></div></div>
+}
+
+function RecognitionResultView({ prediction, selectedFile, previewUrl, modelInfo, onIdentifyAnother }: { prediction: SymbolPrediction; selectedFile: File | null; previewUrl: string; modelInfo: SymbolModelInfo | null; onIdentifyAnother: () => void }) {
+  return (
+    <div className="research-content result-content">
+      <PageTitle title="02 — Character Recognition Result" subtitle="The uploaded handwritten character has been analysed using the current recognition model." />
+      <div className="result-grid">
+        <section className="research-card input-result-card"><CardTitle icon="◉" title="Input Character Image" description="Handwritten ancient-character provided by the user." /><div className="result-image-wrap">{previewUrl ? <img src={previewUrl} alt="Uploaded handwritten character" /> : <span>No preview</span>}</div><div className="result-meta"><span>File Name <b>{selectedFile?.name || '—'}</b></span><span>Input Type <b>Handwritten / Eye Copy</b></span><span>Image Format <b>{selectedFile?.type.replace('image/', '').toUpperCase() || '—'}</b></span><span>Image Size <b>{modelInfo ? `${modelInfo.image_size} × ${modelInfo.image_size} model input` : '—'}</b></span></div></section>
+        <section className="research-card output-result-card"><CardTitle icon="⚙" title="Recognition Output" description="Predicted character and confidence score from the current model." /><div className="prediction-highlight"><div className="predicted-glyph">{prediction.symbol}</div><div className="confidence-copy"><span>PREDICTED ANCIENT CHARACTER</span><strong>{percent(prediction.confidence)}</strong><div className="confidence-meter"><i style={{ width: `${prediction.confidence * 100}%` }} /></div><small>{prediction.confidence >= 0.75 ? 'High visual similarity' : 'Moderate visual similarity'} · ranked by model confidence</small></div></div><div className="candidate-heading"><span>TOP CANDIDATE PREDICTIONS</span><span>Confidence</span></div><div className="candidate-table">{prediction.candidates.map((candidate, index) => <div className="candidate-row" key={`${candidate.symbol}-${index}`}><span>{index + 1}</span><strong>{candidate.symbol}</strong><b>{percent(candidate.confidence)}</b><small>{index === 0 ? 'Most likely match' : index === 1 ? 'Visually similar' : 'Possible variant'}</small></div>)}</div></section>
+      </div>
+      <div className="result-complete-bar"><div><span>⌕</span><div><strong>Recognition Complete</strong><small>The handwritten character has been successfully analysed using the current model.</small></div></div><button className="gold-button" type="button" onClick={onIdentifyAnother}>↻ Identify Another Character</button></div>
+      <p className="research-note">This is a prototype visual classification result, not a confirmed historical translation.</p>
+    </div>
+  )
+}
+
+function ExamplesView({ onOpenRecognition }: { onOpenRecognition: () => void }) {
+  return <div className="research-content examples-content"><PageTitle title="03 — Recognition Examples" subtitle="Examples of handwritten ancient-character recognition using the current prototype model." /><div className="examples-grid">{examples.map((example) => <article className="example-card" key={example.name}><div className="example-card-head"><h2>{example.name}</h2><span className={example.tone}>{example.confidence > 85 ? 'High Confidence' : 'Moderate Confidence'}</span></div><div className="example-columns"><div><small>Input Image (Handwritten)</small><div className="example-image"><span>{example.input}</span></div></div><div><small>Predicted Character</small><div className="example-image predicted"><span>{example.output}</span></div></div></div><div className="example-confidence"><span>Confidence Score</span><strong>{example.confidence}%</strong></div><div className="example-meter"><i style={{ width: `${example.confidence}%` }} /></div><div className="example-meta"><span>Input Type <b>Handwritten / Eye Copy</b></span><span>Prediction Rank <b>1 / 5</b></span></div></article>)}</div><div className="recognition-action-bar compact"><div><strong>Multiple Character Recognition</strong><span>Try the model with a new handwritten character image.</span></div><button className="gold-button" type="button" onClick={onOpenRecognition}>✦ Try More Examples</button></div></div>
+}
+
+function ThreeInputView({ onUpload, onOpenRecognition }: { onUpload: (event: ChangeEvent<HTMLInputElement>) => void; onOpenRecognition: () => void }) {
+  return <div className="research-content"><PageTitle title="04 — Three-Input Analysis" subtitle="Compare independent representations of the same inscription before interpretation." /><div className="analysis-grid"><RepresentationCard number="I" title="Direct Stone Image" status="PLANNED" description="Original evidence from the stone surface." /><RepresentationCard number="II" title="Human-Drawn / Eye Copy" status="AVAILABLE" description="The active prototype input for character recognition." available onUpload={onUpload} /><RepresentationCard number="III" title="Estampage / Scan" status="PLANNED" description="A digitised impression for future comparison." /></div><div className="analysis-callout"><strong>Recommended next step</strong><p>Upload the handwritten or eye-copy representation first. The recognition result can then be compared with the original stone image and estampage when those inputs are available.</p><button className="gold-button" type="button" onClick={onOpenRecognition}>Open Character Recognition</button></div></div>
+}
+
+function DatasetView({ modelInfo, modelStatus }: { modelInfo: SymbolModelInfo | null; modelStatus: string }) {
+  return <div className="research-content"><PageTitle title="05 — Dataset & Model" subtitle="Labels and technical metadata used by the current handwritten-symbol classifier." /><div className="dataset-layout"><section className="research-card dataset-card"><CardTitle icon="▤" title="Recognised Symbol Classes" description="Nine Sinhala character labels are available in the bundled model." /><div className="class-grid">{(modelInfo?.classes || ['අ', 'ඉ', 'උ', 'එ', 'ඔ', 'ක', 'ඝ', 'ඡ', 'ට']).map((symbol, index) => <div key={symbol}><span>{String(index + 1).padStart(2, '0')}</span><strong>{symbol}</strong></div>)}</div></section><section className="research-card metadata-card"><CardTitle icon="⚙" title="Model Metadata" description="Loaded from hog_random_forest_model.pkl." /><div className="metadata-list"><span>Connection status <b className={modelStatus === 'MODEL ONLINE' ? 'ready-text' : 'warning-text'}>{modelStatus}</b></span><span>Estimator <b>{modelInfo ? `${modelInfo.n_estimators}-tree Random Forest` : '—'}</b></span><span>Model input <b>{modelInfo ? `${modelInfo.image_size} × ${modelInfo.image_size} px` : '—'}</b></span><span>Feature extraction <b>HOG</b></span><span>Endpoint <b>/api/symbols/predict</b></span></div></section></div><p className="research-note">The model identifies visual classes only. A representative labelled evaluation set is required before reporting production accuracy.</p></div>
+}
+
+function AboutView({ modelInfo }: { modelInfo: SymbolModelInfo | null }) {
+  return <div className="research-content about-content"><PageTitle title="06 — About the Prototype" subtitle="A research interface for preserving, comparing, and interpreting Sri Lankan inscription evidence." /><section className="about-card"><div className="about-seal">AI</div><div><h2>Digital Epigraphy Research Project</h2><p>The Sri Lankan Ancient Inscription Translator brings together image evidence, human-drawn copies, and machine-assisted character recognition in one reviewable workspace.</p><p>The current Python backend loads a HOG feature extractor and Random Forest classifier for {modelInfo?.classes.length || 9} Sinhala handwritten character classes. Every prediction should be reviewed by an epigraphist or language specialist.</p></div></section></div>
 }
 
 export default App

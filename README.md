@@ -1,6 +1,6 @@
-# Atlas Workspace
+# Sri Lankan Ancient Inscription Translator
 
-Atlas is a React + TypeScript dashboard backed by a FastAPI service and a SQLite project store. The Python analytics model scores project health from completion, open work, overdue tasks, and estimated effort.
+This is a React + TypeScript research interface backed by FastAPI. It presents three inscription representations, accepts a handwritten/eye-copy image, and sends it to the bundled HOG + Random Forest model for Sinhala character recognition. The backend also includes a SQLite project store and workspace insight endpoints for the wider research workspace.
 
 ## Run the full stack
 
@@ -17,7 +17,7 @@ python3 -m venv backend/.venv
 backend/.venv/bin/python -m pip install -r backend/requirements.txt
 ```
 
-Start the API in one terminal:
+Start the API in one terminal from the repository root:
 
 ```bash
 backend/.venv/bin/uvicorn backend.app.main:app --reload --port 8000
@@ -29,9 +29,9 @@ Start the dashboard in another:
 npm run dev
 ```
 
-The dashboard runs on `http://127.0.0.1:5173`; API docs are available at `http://127.0.0.1:8000/docs`.
+The translator runs on `http://127.0.0.1:5173`; API docs are available at `http://127.0.0.1:8000/docs`.
 
-Set `VITE_API_URL` when the API is hosted somewhere other than `http://127.0.0.1:8000`. The frontend keeps a local browser fallback for creating projects when the API is unavailable.
+Set `VITE_API_URL` when the API is hosted somewhere other than `http://127.0.0.1:8000`. The recognition screen reports whether the model endpoint is online, previews the selected image, and only submits it when you press **Identify Character**.
 
 ## Validate
 

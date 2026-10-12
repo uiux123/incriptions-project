@@ -1,13 +1,9 @@
 :root {
-  font-family: 'DM Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  color: #242238;
-  background: #f8f8fc;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-html { min-width: 320px; background: #f8f8fc; }
+html { min-width: 320px; background: #f6efd9; }
 body { min-width: 320px; min-height: 100vh; margin: 0; }
-button:focus-visible { outline: 3px solid rgba(128, 102, 233, .38); outline-offset: 3px; }
